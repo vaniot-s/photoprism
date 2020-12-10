@@ -129,7 +129,7 @@ export class Photo extends RestModel {
 
     localDayString() {
         if (!this.TakenAtLocal) {
-            return new Date().getDay().toString().padStart(2, "0");
+            return new Date().getDate().toString().padStart(2, "0");
         }
 
         if (!this.Day || this.Day <= 0) {
@@ -141,7 +141,7 @@ export class Photo extends RestModel {
 
     localMonthString() {
         if (!this.TakenAtLocal) {
-            return new Date().getMonth().toString().padStart(2, "0");
+            return (new Date().getMonth() + 1).toString().padStart(2, "0");
         }
 
         if (!this.Month || this.Month <= 0) {
@@ -249,7 +249,7 @@ export class Photo extends RestModel {
             return false;
         }
 
-        return this.Files.findIndex(f => f.Codec === CodecAvc1) !== -1 || this.Files.findIndex(f => f.Type === TypeMP4) !== -1;
+        return this.Files.findIndex(f => f.Video) !== -1;
     }
 
     videoFile() {

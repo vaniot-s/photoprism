@@ -74,7 +74,7 @@ func PhotosMissing(limit int, offset int) (entities entity.Photos, err error) {
 	err = Db().
 		Select("photos.*").
 		Joins("JOIN files a ON photos.id = a.photo_id ").
-		Joins("LEFT JOIN files b ON a.photo_id = b.photo_id AND a.id != b.id AND b.file_missing = 0").
+		Joins("LEFT JOIN files b ON a.photo_id = b.photo_id AND a.id != b.id AND b.file_missing = 0 AND b.file_root = '/'").
 		Where("a.file_missing = 1 AND b.id IS NULL").
 		Where("photos.photo_type <> ?", entity.TypeText).
 		Group("photos.id").
@@ -85,8 +85,16 @@ func PhotosMissing(limit int, offset int) (entities entity.Photos, err error) {
 
 // ResetPhotoQuality resets the quality of photos without primary file to -1.
 func ResetPhotoQuality() error {
-	return Db().Table("photos").
+	if err := Db().Table("photos").
 		Where("id IN (SELECT photos.id FROM photos LEFT JOIN files ON photos.id = files.photo_id AND files.file_primary = 1 WHERE files.id IS NULL GROUP BY photos.id)").
+		Where("id IN (SELECT id FROM (SELECT photos.id FROM photos LEFT JOIN files ON photos.id = files.photo_id AND files.file_primary = 1 WHERE files.id IS NULL GROUP BY photos.id) AS tmp)").
+		Update("photo_quality", -1).Error; err == nil {
+		return nil
+	}
+
+	// MySQL fallback, see https://github.com/photoprism/photoprism/issues/599
+	return Db().Table("photos").
+		Where("id IN (SELECT id FROM (SELECT photos.id FROM photos LEFT JOIN files ON photos.id = files.photo_id AND files.file_primary = 1 WHERE files.id IS NULL GROUP BY photos.id) AS tmp)").
 		Update("photo_quality", -1).Error
 }
 
@@ -104,8 +112,8 @@ func PhotosCheck(limit int, offset int) (entities entity.Photos, err error) {
 		Preload("Cell").
 		Preload("Cell.Place").
 		Where("checked_at IS NULL OR checked_at < ?", time.Now().Add(-1*time.Hour*24*3)).
-		Where("updated_at < ?", time.Now().Add(-1*time.Minute*10)).
-		Limit(limit).Offset(offset).Find(&entities).Error
+		Where("updated_at < ? OR (cell_id = 'zz' AND photo_lat <> 0)", time.Now().Add(-1*time.Minute*10)).
+		Order("photos.ID ASC").Limit(limit).Offset(offset).Find(&entities).Error
 
 	return entities, err
 }

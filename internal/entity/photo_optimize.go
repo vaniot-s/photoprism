@@ -70,7 +70,7 @@ func (m *Photo) EstimatePlace() {
 		Where("place_id <> '' AND place_id <> 'zz' AND place_src <> '' AND place_src <> ?", SrcEstimate).
 		Order(gorm.Expr(dateExpr, m.TakenAt)).
 		Preload("Place").First(&recentPhoto).Error; err != nil {
-		log.Errorf("photo: %s (estimate place)", err.Error())
+		log.Debugf("photo: can't estimate place at %s", m.TakenAt)
 		m.EstimateCountry()
 	} else {
 		if hours := recentPhoto.TakenAt.Sub(m.TakenAt) / time.Hour; hours < -36 || hours > 36 {
@@ -92,12 +92,20 @@ func (m *Photo) EstimatePlace() {
 }
 
 // Optimize photo data, improve if possible.
-func (m *Photo) Optimize() (updated bool, err error) {
+func (m *Photo) Optimize(stackMeta, stackUuid bool) (updated bool, merged Photos, err error) {
 	if !m.HasID() {
-		return false, errors.New("photo: can't maintain, id is empty")
+		return false, merged, errors.New("photo: can't maintain, id is empty")
 	}
 
 	current := *m
+
+	if m.HasLatLng() && !m.HasLocation() {
+		m.UpdateLocation()
+	}
+
+	if merged, err = m.Stack(stackMeta, stackUuid); err != nil {
+		log.Errorf("photo: %s (stack)", err)
+	}
 
 	m.EstimatePlace()
 
@@ -123,10 +131,10 @@ func (m *Photo) Optimize() (updated bool, err error) {
 	checked := Timestamp()
 
 	if reflect.DeepEqual(*m, current) {
-		return false, m.Update("CheckedAt", &checked)
+		return false, merged, m.Update("CheckedAt", &checked)
 	}
 
 	m.CheckedAt = &checked
 
-	return true, m.Save()
+	return true, merged, m.Save()
 }

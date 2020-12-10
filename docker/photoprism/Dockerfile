@@ -1,4 +1,4 @@
-FROM photoprism/development:20201020 as build
+FROM photoprism/development:20201204 as build
 
 # Set up project directory
 WORKDIR "/go/src/github.com/photoprism/photoprism"
@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         tzdata \
         libheif-examples \
-        libseccomp2 \
         gnupg \
         gpg-agent \
         apt-utils \
@@ -62,9 +61,10 @@ ENV TMPDIR /tmp
 
 # Storage path names
 ENV PHOTOPRISM_ASSETS_PATH /photoprism/assets
+ENV PHOTOPRISM_STORAGE_PATH /photoprism/storage
+ENV PHOTOPRISM_BACKUP_PATH /var/lib/photoprism
 ENV PHOTOPRISM_ORIGINALS_PATH /photoprism/originals
 ENV PHOTOPRISM_IMPORT_PATH /photoprism/import
-ENV PHOTOPRISM_STORAGE_PATH /photoprism/storage
 ENV PHOTOPRISM_LOG_FILENAME /photoprism/photoprism.log
 ENV PHOTOPRISM_PID_FILENAME /photoprism/photoprism.pid
 
@@ -101,14 +101,13 @@ COPY --from=build /root/.photoprism/assets /photoprism/assets
 
 # Create directories
 RUN mkdir -p \
+    /var/lib/photoprism \
     /photoprism/originals \
     /photoprism/import \
     /photoprism/storage/settings \
     /photoprism/storage/cache && \
-    chmod 777 /photoprism && \
-    chown -R photoprism:photoprism /photoprism && \
-    find /photoprism -type d -print0 | xargs -0 chmod 777 && \
-    find /photoprism -type f -print0 | xargs -0 chmod a+rw
+    chown -R photoprism:photoprism /photoprism /var/lib/photoprism && \
+    chmod -R a+rw /photoprism /var/lib/photoprism
 
 # Show photoprism version
 RUN photoprism -v
@@ -119,6 +118,7 @@ EXPOSE 2342
 # Configure entrypoint
 COPY --chown=root:root /docker/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+VOLUME /var/lib/photoprism
 
 # Run server
 CMD ["photoprism", "start"]

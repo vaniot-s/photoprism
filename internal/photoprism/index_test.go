@@ -1,8 +1,9 @@
 package photoprism
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/photoprism/photoprism/internal/classify"
 	"github.com/photoprism/photoprism/internal/config"
@@ -22,7 +23,7 @@ func TestIndex_Start(t *testing.T) {
 	nd := nsfw.New(conf.NSFWModelPath())
 	convert := NewConvert(conf)
 
-	ind := NewIndex(conf, tf, nd, convert)
+	ind := NewIndex(conf, tf, nd, convert, NewFiles(), NewPhotos())
 	imp := NewImport(conf, ind, convert)
 	opt := ImportOptionsMove(conf.ImportPath())
 
@@ -47,8 +48,8 @@ func TestIndex_File(t *testing.T) {
 	nd := nsfw.New(conf.NSFWModelPath())
 	convert := NewConvert(conf)
 
-	ind := NewIndex(conf, tf, nd, convert)
+	ind := NewIndex(conf, tf, nd, convert, NewFiles(), NewPhotos())
 
-	err := ind.File("xxx")
+	err := ind.SingleFile("xxx")
 	assert.Equal(t, IndexFailed, err.Status)
 }

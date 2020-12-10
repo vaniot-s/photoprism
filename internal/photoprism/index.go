@@ -27,16 +27,18 @@ type Index struct {
 	nsfwDetector *nsfw.Detector
 	convert      *Convert
 	files        *Files
+	photos       *Photos
 }
 
 // NewIndex returns a new indexer and expects its dependencies as arguments.
-func NewIndex(conf *config.Config, tensorFlow *classify.TensorFlow, nsfwDetector *nsfw.Detector, convert *Convert) *Index {
+func NewIndex(conf *config.Config, tensorFlow *classify.TensorFlow, nsfwDetector *nsfw.Detector, convert *Convert, files *Files, photos *Photos) *Index {
 	i := &Index{
 		conf:         conf,
 		tensorFlow:   tensorFlow,
 		nsfwDetector: nsfwDetector,
 		convert:      convert,
-		files:        NewFiles(),
+		files:        files,
+		photos:       photos,
 	}
 
 	return i
@@ -102,6 +104,8 @@ func (ind *Index) Start(opt IndexOptions) fs.Done {
 		log.Errorf("index: %s", err)
 	}
 
+	defer ind.files.Done()
+
 	filesIndexed := 0
 	ignore := fs.NewIgnoreList(fs.IgnoreFile, true, false)
 
@@ -129,11 +133,17 @@ func (ind *Index) Start(opt IndexOptions) fs.Done {
 
 			if skip, result := fs.SkipWalk(fileName, isDir, isSymlink, done, ignore); skip {
 				if (isSymlink || isDir) && result != filepath.SkipDir {
-					folder := entity.NewFolder(entity.RootOriginals, relName, nil)
+					folder := entity.NewFolder(entity.RootOriginals, relName, fs.BirthTime(fileName))
 
 					if err := folder.Create(); err == nil {
 						log.Infof("index: added folder /%s", folder.Path)
 					}
+				}
+
+				if isDir {
+					event.Publish("index.folder", event.Data{
+						"filePath": relName,
+					})
 				}
 
 				return result
@@ -161,7 +171,7 @@ func (ind *Index) Start(opt IndexOptions) fs.Done {
 				return nil
 			}
 
-			related, err := mf.RelatedFiles(ind.conf.Settings().Index.Sequences)
+			related, err := mf.RelatedFiles(ind.conf.Settings().StackSequences())
 
 			if err != nil {
 				log.Warnf("index: %s", err.Error())
@@ -216,6 +226,10 @@ func (ind *Index) Start(opt IndexOptions) fs.Done {
 	}
 
 	if filesIndexed > 0 {
+		event.Publish("index.updating", event.Data{
+			"step": "counts",
+		})
+
 		if err := entity.UpdatePhotoCounts(); err != nil {
 			log.Errorf("index: %s", err)
 		}
@@ -229,7 +243,7 @@ func (ind *Index) Start(opt IndexOptions) fs.Done {
 }
 
 // File indexes a single file and returns the result.
-func (ind *Index) File(name string) (result IndexResult) {
+func (ind *Index) SingleFile(name string) (result IndexResult) {
 	file, err := NewMediaFile(name)
 
 	if err != nil {
@@ -248,5 +262,5 @@ func (ind *Index) File(name string) (result IndexResult) {
 		return result
 	}
 
-	return IndexRelated(related, ind, IndexOptionsAll())
+	return IndexRelated(related, ind, IndexOptionsSingle())
 }

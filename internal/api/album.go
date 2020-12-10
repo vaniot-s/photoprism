@@ -16,6 +16,7 @@ import (
 	"github.com/photoprism/photoprism/internal/photoprism"
 	"github.com/photoprism/photoprism/internal/query"
 	"github.com/photoprism/photoprism/internal/service"
+	"github.com/photoprism/photoprism/internal/thumb"
 	"github.com/photoprism/photoprism/pkg/fs"
 	"github.com/photoprism/photoprism/pkg/rnd"
 
@@ -23,6 +24,19 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/photoprism/photoprism/pkg/txt"
 )
+
+// ClearAlbumThumbCache removes all cached album covers e.g. after adding or removed photos.
+func ClearAlbumThumbCache(uid string) {
+	cache := service.Cache()
+
+	for typeName := range thumb.Types {
+		cacheKey := fmt.Sprintf("album-thumbs:%s:%s", uid, typeName)
+
+		if err := cache.Delete(cacheKey); err == nil {
+			log.Debugf("removed %s from cache", cacheKey)
+		}
+	}
+}
 
 // GET /api/v1/albums
 func GetAlbums(router *gin.RouterGroup) {
@@ -215,7 +229,6 @@ func LikeAlbum(router *gin.RouterGroup) {
 			return
 		}
 
-		conf := service.Config()
 		id := c.Param("uid")
 		album, err := query.AlbumByUID(id)
 
@@ -224,8 +237,10 @@ func LikeAlbum(router *gin.RouterGroup) {
 			return
 		}
 
-		album.AlbumFavorite = true
-		conf.Db().Save(&album)
+		if err := album.Update("AlbumFavorite", true); err != nil {
+			Abort(c, http.StatusInternalServerError, i18n.ErrSaveFailed)
+			return
+		}
 
 		UpdateClientConfig()
 		PublishAlbumEvent(EntityUpdated, id, c)
@@ -247,7 +262,6 @@ func DislikeAlbum(router *gin.RouterGroup) {
 			return
 		}
 
-		conf := service.Config()
 		id := c.Param("uid")
 		album, err := query.AlbumByUID(id)
 
@@ -256,8 +270,10 @@ func DislikeAlbum(router *gin.RouterGroup) {
 			return
 		}
 
-		album.AlbumFavorite = false
-		conf.Db().Save(&album)
+		if err := album.Update("AlbumFavorite", false); err != nil {
+			Abort(c, http.StatusInternalServerError, i18n.ErrSaveFailed)
+			return
+		}
 
 		UpdateClientConfig()
 		PublishAlbumEvent(EntityUpdated, id, c)
@@ -362,6 +378,7 @@ func AddPhotosToAlbum(router *gin.RouterGroup) {
 				event.SuccessMsg(i18n.MsgEntriesAddedTo, len(added), txt.Quote(a.Title()))
 			}
 
+			ClearAlbumThumbCache(a.AlbumUID)
 			PublishAlbumEvent(EntityUpdated, a.AlbumUID, c)
 		}
 
@@ -407,6 +424,7 @@ func RemovePhotosFromAlbum(router *gin.RouterGroup) {
 				event.SuccessMsg(i18n.MsgEntriesRemovedFrom, len(removed), txt.Quote(txt.Quote(a.Title())))
 			}
 
+			ClearAlbumThumbCache(a.AlbumUID)
 			PublishAlbumEvent(EntityUpdated, a.AlbumUID, c)
 		}
 

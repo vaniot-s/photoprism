@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/photoprism/photoprism/pkg/txt"
+
 	"github.com/gosimple/slug"
 	"github.com/jinzhu/gorm"
 	"github.com/photoprism/photoprism/pkg/fs"
@@ -119,19 +121,22 @@ func (m *File) ShareFileName() string {
 
 // Changed returns true if new and old file size or modified time are different.
 func (m File) Changed(fileSize int64, modTime time.Time) bool {
-	if m.DeletedAt != nil {
-		return true
-	}
-
+	// File size has changed.
 	if m.FileSize != fileSize {
 		return true
 	}
 
+	// Modification time has changed.
 	if m.ModTime == modTime.Unix() {
 		return false
 	}
 
 	return true
+}
+
+// Missing returns true if this file is current missing or marked as deleted.
+func (m File) Missing() bool {
+	return m.FileMissing || m.DeletedAt != nil
 }
 
 // Delete permanently deletes the entity from the database.
@@ -213,6 +218,65 @@ func (m *File) UpdateVideoInfos() error {
 // Updates a column in the database.
 func (m *File) Update(attr string, value interface{}) error {
 	return UnscopedDb().Model(m).UpdateColumn(attr, value).Error
+}
+
+// Updates multiple columns in the database.
+func (m *File) Updates(values interface{}) error {
+	return UnscopedDb().Model(m).UpdateColumns(values).Error
+}
+
+// Rename updates the name and path of this file.
+func (m *File) Rename(fileName, rootName, filePath, fileBase string) error {
+	log.Debugf("file: renaming %s to %s", txt.Quote(m.FileName), txt.Quote(fileName))
+
+	// Update database row.
+	if err := m.Updates(map[string]interface{}{
+		"FileName":    fileName,
+		"FileRoot":    rootName,
+		"FileMissing": false,
+		"DeletedAt":   nil,
+	}); err != nil {
+		return err
+	}
+
+	m.FileName = fileName
+	m.FileRoot = rootName
+	m.FileMissing = false
+	m.DeletedAt = nil
+
+	// Update photo path and name if possible.
+	if p := m.RelatedPhoto(); p != nil {
+		return p.Updates(map[string]interface{}{
+			"PhotoPath": filePath,
+			"PhotoName": fileBase,
+		})
+	}
+
+	return nil
+}
+
+// Undelete removes the missing flag from this file.
+func (m *File) Undelete() error {
+	if !m.Missing() {
+		return nil
+	}
+
+	// Update database row.
+	err := m.Updates(map[string]interface{}{
+		"FileMissing": false,
+		"DeletedAt":   nil,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("file: removed missing flag from %s", txt.Quote(m.FileName))
+
+	m.FileMissing = false
+	m.DeletedAt = nil
+
+	return nil
 }
 
 // RelatedPhoto returns the related photo entity.

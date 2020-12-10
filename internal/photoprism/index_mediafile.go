@@ -49,7 +49,7 @@ func (r IndexResult) Failed() bool {
 }
 
 func (r IndexResult) Success() bool {
-	return r.Err == nil && r.FileID > 0
+	return r.Err == nil && (r.FileID > 0 || r.Stacked() || r.Skipped() || r.Archived())
 }
 
 func (r IndexResult) Indexed() bool {
@@ -58,6 +58,14 @@ func (r IndexResult) Indexed() bool {
 
 func (r IndexResult) Stacked() bool {
 	return r.Status == IndexStacked
+}
+
+func (r IndexResult) Skipped() bool {
+	return r.Status == IndexSkipped
+}
+
+func (r IndexResult) Archived() bool {
+	return r.Status == IndexArchived
 }
 
 func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (result IndexResult) {
@@ -100,12 +108,13 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 
 	fileHash := ""
 	fileChanged := true
+	fileRenamed := false
 	fileExists := false
 	fileStacked := false
 
 	photoExists := false
 
-	stripSequence := Config().Settings().Index.Sequences
+	stripSequence := Config().Settings().StackSequences()
 
 	event.Publish("index.indexing", event.Data{
 		"fileHash": fileHash,
@@ -115,38 +124,55 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		"baseName": filepath.Base(fileName),
 	})
 
+	// Try to find existing file by path and name.
 	fileQuery = entity.UnscopedDb().First(&file, "file_name = ? AND (file_root = ? OR file_root = '')", fileName, fileRoot)
 	fileExists = fileQuery.Error == nil
 
-	if !fileExists && !m.IsSidecar() {
+	// Try to find existing file by hash. Skip this for sidecar files, and files outside the originals folder.
+	if !fileExists && !m.IsSidecar() && m.Root() == entity.RootOriginals {
 		fileHash = m.Hash()
 		fileQuery = entity.UnscopedDb().First(&file, "file_hash = ?", fileHash)
 		fileExists = fileQuery.Error == nil
 
-		if fileExists && fs.FileExists(FileName(file.FileRoot, file.FileName)) {
+		if !fileExists {
+			// Do nothing.
+		} else if fs.FileExists(FileName(file.FileRoot, file.FileName)) {
 			if err := entity.AddDuplicate(m.RootRelName(), m.Root(), m.Hash(), m.FileSize(), m.ModTime().Unix()); err != nil {
 				log.Error(err)
 			}
 
 			result.Status = IndexDuplicate
+
 			return result
+		} else if err := file.Rename(m.RootRelName(), m.Root(), filePath, fileBase); err != nil {
+			log.Errorf("index: %s in %s (rename)", err.Error(), logName)
+
+			result.Status = IndexFailed
+			result.Err = err
+
+			return result
+		} else {
+			fileRenamed = true
 		}
 	}
 
+	// Look for existing photo if file wasn't indexed yet...
 	if !fileExists {
 		photoQuery = entity.UnscopedDb().First(&photo, "photo_path = ? AND photo_name = ?", filePath, fileBase)
 
-		if photoQuery.Error != nil && m.MetaData().HasTimeAndPlace() {
+		// Stack file based on matching location and time metadata?
+		if photoQuery.Error != nil && Config().Settings().StackMeta() && m.MetaData().HasTimeAndPlace() {
 			metaData = m.MetaData()
-			photoQuery = entity.UnscopedDb().First(&photo, "photo_lat = ? AND photo_lng = ? AND taken_at = ? AND camera_serial = ?", metaData.Lat, metaData.Lng, metaData.TakenAt, metaData.CameraSerial)
+			photoQuery = entity.UnscopedDb().First(&photo, "photo_lat = ? AND photo_lng = ? AND taken_at = ? AND taken_src = 'meta' AND camera_serial = ?", metaData.Lat, metaData.Lng, metaData.TakenAt, metaData.CameraSerial)
 
 			if photoQuery.Error == nil {
 				fileStacked = true
 			}
 		}
 
-		if photoQuery.Error != nil && m.MetaData().HasDocumentID() {
-			photoQuery = entity.UnscopedDb().First(&photo, "uuid = ?", m.MetaData().DocumentID)
+		// Stack file based on the same unique ID?
+		if photoQuery.Error != nil && Config().Settings().StackUUID() && m.MetaData().HasDocumentID() {
+			photoQuery = entity.UnscopedDb().First(&photo, "uuid <> '' AND uuid = ?", m.MetaData().DocumentID)
 
 			if photoQuery.Error == nil {
 				fileStacked = true
@@ -155,10 +181,15 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 	} else {
 		photoQuery = entity.UnscopedDb().First(&photo, "id = ?", file.PhotoID)
 
-		fileChanged = file.Changed(fileSize, modTime)
-
-		if fileChanged {
+		if fileRenamed {
+			fileChanged = true
+			log.Debugf("index: %s was renamed", txt.Quote(m.BaseName()))
+		} else if file.Changed(fileSize, modTime) {
+			fileChanged = true
 			log.Debugf("index: %s was modified (new size %d, old size %d, new timestamp %d, old timestamp %d)", txt.Quote(m.BaseName()), fileSize, file.FileSize, modTime.Unix(), file.ModTime)
+		} else if file.Missing() {
+			fileChanged = true
+			log.Debugf("index: %s was missing", txt.Quote(m.BaseName()))
 		}
 	}
 
@@ -169,10 +200,17 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		return result
 	}
 
+	// Remove file from duplicates table if exists.
+	if err := entity.RemoveDuplicate(m.RootRelName(), m.Root()); err != nil {
+		log.Error(err)
+	}
+
 	details := photo.GetDetails()
 
+	// Try to recover photo metadata from backup if not exists.
 	if !photoExists {
 		photo.PhotoQuality = -1
+		photo.PhotoSingle = !o.Stack
 
 		if yamlName := fs.TypeYaml.FindFirst(m.FileName(), []string{Config().SidecarPath(), fs.HiddenPath}, Config().OriginalsPath(), stripSequence); yamlName != "" {
 			if err := photo.LoadFromYaml(yamlName); err != nil {
@@ -186,6 +224,7 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		}
 	}
 
+	// Calculate SHA1 file hash if not exists.
 	if fileHash == "" {
 		fileHash = m.Hash()
 	}
@@ -194,6 +233,7 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 	photo.PhotoName = fileBase
 	file.FileError = ""
 
+	// Flag first JPEG as primary file for this photo.
 	if !file.FilePrimary {
 		if photoExists {
 			if q := entity.UnscopedDb().Where("file_type = 'jpg' AND file_primary = 1 AND photo_id = ?", photo.ID).First(&primaryFile); q.Error != nil {
@@ -212,12 +252,18 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		}
 	}
 
-	if photo.PhotoQuality == -1 && file.FilePrimary {
-		// restore photos that have been purged automatically
+	if photo.PhotoQuality == -1 && (file.FilePrimary || fileChanged) {
+		// Restore photos that have been purged automatically.
 		photo.DeletedAt = nil
 	} else if photo.DeletedAt != nil {
-		// don't waste time indexing deleted / archived photos
+		// Don't waste time indexing deleted / archived photos.
 		result.Status = IndexArchived
+
+		// Remove missing flag from file.
+		if err = file.Undelete(); err != nil {
+			log.Errorf("index: %s in %s (undelete)", err.Error(), logName)
+		}
+
 		return result
 	}
 
@@ -566,7 +612,7 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		}
 
 		var locLabels classify.Labels
-		locKeywords, locLabels = photo.UpdateLocation(ind.conf.GeoCodingApi())
+		locKeywords, locLabels = photo.UpdateLocation()
 		labels = append(labels, locLabels...)
 	}
 
@@ -683,7 +729,7 @@ func (ind *Index) MediaFile(m *MediaFile, o IndexOptions, originalName string) (
 		if err := photo.IndexKeywords(); err != nil {
 			log.Errorf("index: %s in %s (save keywords)", err, logName)
 		}
-	} else {
+	} else if photo.DeletedAt == nil {
 		if photo.PhotoQuality >= 0 {
 			photo.PhotoQuality = photo.QualityScore()
 		}

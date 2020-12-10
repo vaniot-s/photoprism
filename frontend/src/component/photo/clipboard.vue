@@ -25,10 +25,22 @@
             color="share"
             @click.stop="dialog.share = true"
             :disabled="selection.length === 0"
-            v-if="context !== 'archive' && $config.feature('share')"
+            v-if="context !== 'archive' && context !== 'review' && $config.feature('share')"
             class="action-share"
         >
           <v-icon>cloud</v-icon>
+        </v-btn>
+
+        <v-btn
+            fab dark small
+            :title="$gettext('Approve')"
+            color="share"
+            @click.stop="batchApprove"
+            :disabled="selection.length === 0"
+            v-if="context === 'review'"
+            class="action-approve"
+        >
+          <v-icon>check</v-icon>
         </v-btn>
         <v-btn
             fab dark small
@@ -71,7 +83,7 @@
             v-if="context !== 'archive'"
             class="action-album"
         >
-          <v-icon>folder</v-icon>
+          <v-icon>folder_special</v-icon>
         </v-btn>
         <v-btn
             fab dark small
@@ -79,7 +91,7 @@
             :title="$gettext('Archive')"
             @click.stop="dialog.archive = true"
             :disabled="selection.length === 0"
-            v-if="!album && context !== 'archive' && $config.feature('archive')"
+            v-if="!isAlbum && context !== 'archive' && $config.feature('archive')"
             class="action-archive"
         >
           <v-icon>archive</v-icon>
@@ -101,7 +113,7 @@
             color="remove"
             @click.stop="removeFromAlbum"
             :disabled="selection.length === 0"
-            v-if="album"
+            v-if="isAlbum"
             class="action-delete"
         >
           <v-icon>remove</v-icon>
@@ -141,6 +153,7 @@ export default {
     return {
       config: this.$config.values,
       expanded: false,
+      isAlbum: this.album && this.album.Type === 'album',
       dialog: {
         archive: false,
         album: false,
@@ -152,6 +165,13 @@ export default {
     clearClipboard() {
       this.$clipboard.clear();
       this.expanded = false;
+    },
+    batchApprove() {
+      Api.post("batch/photos/approve", {"photos": this.selection}).then(() => this.onApproved());
+    },
+    onApproved() {
+      Notify.success(this.$gettext("Selection approved"));
+      this.clearClipboard();
     },
     batchArchivePhotos() {
       this.dialog.archive = false;

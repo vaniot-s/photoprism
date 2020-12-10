@@ -50,7 +50,7 @@ func TestConfig_Version(t *testing.T) {
 	c := NewConfig(CliTestContext())
 
 	version := c.Version()
-	assert.Equal(t, "test", version)
+	assert.Equal(t, "0.0.0", version)
 }
 
 func TestConfig_TensorFlowVersion(t *testing.T) {
@@ -84,6 +84,12 @@ func TestConfig_SettingsPath(t *testing.T) {
 	c := NewConfig(CliTestContext())
 
 	assert.Contains(t, c.SettingsPath(), "/storage/testdata/settings")
+}
+
+func TestConfig_BackupPath(t *testing.T) {
+	c := NewConfig(CliTestContext())
+
+	assert.Contains(t, c.BackupPath(), "/storage/testdata/backup")
 }
 
 func TestConfig_PIDFilename(t *testing.T) {
@@ -278,14 +284,14 @@ func TestConfig_WakeupInterval(t *testing.T) {
 	assert.Equal(t, time.Duration(900000000000), c.WakeupInterval())
 }
 
-func TestConfig_GeoCodingApi(t *testing.T) {
+func TestConfig_GeoApi(t *testing.T) {
 	c := NewConfig(CliTestContext())
 
-	assert.Equal(t, "", c.GeoCodingApi())
-	c.params.GeoCodingApi = "places"
-	assert.Equal(t, "places", c.GeoCodingApi())
-	c.params.GeoCodingApi = "osm"
-	assert.Equal(t, "osm", c.GeoCodingApi())
+	assert.Equal(t, "", c.GeoApi())
+	c.params.GeoApi = "places"
+	assert.Equal(t, "places", c.GeoApi())
+	c.params.GeoApi = "osm"
+	assert.Equal(t, "osm", c.GeoApi())
 }
 
 func TestConfig_OriginalsLimit(t *testing.T) {

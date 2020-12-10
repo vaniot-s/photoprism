@@ -50,8 +50,7 @@ func TestAlbumCoverByUID(t *testing.T) {
 	t.Run("existing uid empty moment album", func(t *testing.T) {
 		file, err := AlbumCoverByUID("at7axuzitogaaiax")
 
-		assert.Equal(t, "found no cover for moment", err.Error())
-
+		assert.EqualError(t, err, "found no cover for moment", err)
 		assert.Equal(t, "", file.FileName)
 	})
 
@@ -194,5 +193,13 @@ func TestAlbumSearch(t *testing.T) {
 		}
 
 		assert.Equal(t, 0, len(result))
+	})
+}
+
+func TestUpdateAlbumDates(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		if err := UpdateAlbumDates(); err != nil {
+			t.Fatal(err)
+		}
 	})
 }

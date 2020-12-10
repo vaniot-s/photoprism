@@ -11,11 +11,12 @@ import (
 
 // Files represents a list of already indexed file names and their unix modification timestamps.
 type Files struct {
+	count int
 	files query.FileMap
 	mutex sync.RWMutex
 }
 
-// NewFiles returns a new Files instance pointer.
+// NewFiles returns a new Files instance.
 func NewFiles() *Files {
 	m := &Files{
 		files: make(query.FileMap),
@@ -30,18 +31,46 @@ func (m *Files) Init() error {
 	defer m.mutex.Unlock()
 
 	if len(m.files) > 0 {
-		// Already initialized.
+		m.count = len(m.files)
 		return nil
+	}
+
+	if err := query.CleanDuplicates(); err != nil {
+		return fmt.Errorf("%s (clean duplicates)", err.Error())
 	}
 
 	files, err := query.IndexedFiles()
 
 	if err != nil {
-		return fmt.Errorf("%s (query indexed files)", err.Error())
+		return fmt.Errorf("%s (find indexed files)", err.Error())
 	} else {
 		m.files = files
+		m.count = len(files)
 		return nil
 	}
+}
+
+// Done should be called after all files have been processed.
+func (m *Files) Done() {
+	if (len(m.files) - m.count) == 0 {
+		return
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	m.count = 0
+	m.files = make(query.FileMap)
+}
+
+// Remove a file from the lookup table.
+func (m *Files) Remove(fileName, fileRoot string) {
+	key := path.Join(fileRoot, fileName)
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	delete(m.files, key)
 }
 
 // Ignore tests of a file requires indexing, file name must be relative to the originals path.

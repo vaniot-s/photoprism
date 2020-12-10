@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,11 @@ func (m Photos) UIDs() []string {
 	return result
 }
 
+// MapKey returns a key referencing time and location for indexing.
+func MapKey(takenAt time.Time, cellId string) string {
+	return path.Join(strconv.FormatInt(takenAt.Unix(), 36), cellId)
+}
+
 // Photo represents a photo, all its properties, and link to all its images and sidecar files.
 type Photo struct {
 	ID               uint         `gorm:"primary_key" yaml:"-"`
@@ -48,6 +54,7 @@ type Photo struct {
 	PhotoName        string       `gorm:"type:VARBINARY(255);" json:"Name" yaml:"-"`
 	OriginalName     string       `gorm:"type:VARBINARY(768);" json:"OriginalName" yaml:"OriginalName,omitempty"`
 	PhotoFavorite    bool         `json:"Favorite" yaml:"Favorite,omitempty"`
+	PhotoSingle      bool         `json:"Single" yaml:"Single,omitempty"`
 	PhotoPrivate     bool         `json:"Private" yaml:"Private,omitempty"`
 	PhotoScan        bool         `json:"Scan" yaml:"Scan,omitempty"`
 	PhotoPanorama    bool         `json:"Panorama" yaml:"Panorama,omitempty"`
@@ -107,7 +114,7 @@ func NewPhoto() Photo {
 }
 
 // SavePhotoForm saves a model in the database using form data.
-func SavePhotoForm(model Photo, form form.Photo, geoApi string) error {
+func SavePhotoForm(model Photo, form form.Photo) error {
 	locChanged := model.PhotoLat != form.PhotoLat || model.PhotoLng != form.PhotoLng || model.PhotoCountry != form.PhotoCountry
 
 	if err := deepcopier.Copy(&model).From(form); err != nil {
@@ -131,7 +138,7 @@ func SavePhotoForm(model Photo, form form.Photo, geoApi string) error {
 	}
 
 	if locChanged && model.PlaceSrc == SrcManual {
-		locKeywords, labels := model.UpdateLocation(geoApi)
+		locKeywords, labels := model.UpdateLocation()
 
 		model.AddLabels(labels)
 
@@ -891,6 +898,15 @@ func (m *Photo) AllFilesMissing() bool {
 	return count == 0
 }
 
+// AllFiles returns all files of this photo.
+func (m *Photo) AllFiles() (files Files) {
+	if err := UnscopedDb().Where("files.photo_id = ?", m.ID).Find(&files).Error; err != nil {
+		log.Error(err)
+	}
+
+	return files
+}
+
 // Delete deletes the entity from the database.
 func (m *Photo) Delete(permanently bool) error {
 	if permanently {
@@ -899,7 +915,7 @@ func (m *Photo) Delete(permanently bool) error {
 
 	Db().Delete(File{}, "photo_id = ?", m.ID)
 
-	return Db().Delete(m).Error
+	return m.Updates(map[string]interface{}{"DeletedAt": Timestamp(), "PhotoQuality": -1})
 }
 
 // Delete permanently deletes the entity from the database.
@@ -988,4 +1004,67 @@ func (m *Photo) Links() Links {
 // PrimaryFile returns the primary file for this photo.
 func (m *Photo) PrimaryFile() (File, error) {
 	return PrimaryFile(m.PhotoUID)
+}
+
+// MapKey returns a key referencing time and location for indexing.
+func (m *Photo) MapKey() string {
+	return MapKey(m.TakenAt, m.CellID)
+}
+
+// Stack merges a photo with identical ones.
+func (m *Photo) Stack(stackMeta, stackUuid bool) (identical Photos, err error) {
+	if !stackMeta && !stackUuid || m.PhotoSingle || m.DeletedAt != nil {
+		return identical, nil
+	}
+
+	switch {
+	case stackMeta && stackUuid && m.HasLocation() && m.HasLatLng() && m.TakenSrc == SrcMeta && rnd.IsUUID(m.UUID):
+		if err := Db().Where("id > ? AND photo_single = 0", m.ID).
+			Where("(taken_at = ? AND taken_src = 'meta' AND cell_id = ? AND camera_serial = ? AND camera_id = ?) OR (uuid <> '' AND uuid = ?)",
+				m.TakenAt, m.CellID, m.CameraSerial, m.CameraID, m.UUID).Find(&identical).Error; err != nil {
+			return identical, err
+		}
+	case stackMeta && m.HasLocation() && m.HasLatLng() && m.TakenSrc == SrcMeta:
+		if err := Db().Where("id > ? AND photo_single = 0", m.ID).
+			Where("taken_at = ? AND taken_src = 'meta' AND cell_id = ? AND camera_serial = ? AND camera_id = ?",
+				m.TakenAt, m.CellID, m.CameraSerial, m.CameraID).Error; err != nil {
+			return identical, err
+		}
+	case stackUuid && rnd.IsUUID(m.UUID):
+		if err := Db().Where("id > ? AND photo_single = 0", m.ID).
+			Where("uuid <> '' AND uuid = ?", m.UUID).Error; err != nil {
+			return identical, err
+		}
+	default:
+		return identical, nil
+	}
+
+	if len(identical) == 0 {
+		return identical, nil
+	}
+
+	for _, photo := range identical {
+		if err := UnscopedDb().Model(File{}).Where("photo_id = ?", photo.ID).Updates(File{PhotoID: m.ID, PhotoUID: m.PhotoUID}).Error; err != nil {
+			return identical, err
+		}
+
+		switch DbDialect() {
+		case MySQL:
+			UnscopedDb().Exec("UPDATE IGNORE `photos_keywords` SET `photo_id` = ? WHERE (photo_id = ?)", m.ID, photo.ID)
+			UnscopedDb().Exec("UPDATE IGNORE `photos_labels` SET `photo_id` = ? WHERE (photo_id = ?)", m.ID, photo.ID)
+			UnscopedDb().Exec("UPDATE IGNORE `photos_albums` SET `photo_uid` = ? WHERE (photo_uid = ?)", m.PhotoUID, photo.PhotoUID)
+		case SQLite:
+			UnscopedDb().Exec("UPDATE OR IGNORE `photos_keywords` SET `photo_id` = ? WHERE (photo_id = ?)", m.ID, photo.ID)
+			UnscopedDb().Exec("UPDATE OR IGNORE `photos_labels` SET `photo_id` = ? WHERE (photo_id = ?)", m.ID, photo.ID)
+			UnscopedDb().Exec("UPDATE OR IGNORE `photos_albums` SET `photo_uid` = ? WHERE (photo_uid = ?)", m.PhotoUID, photo.PhotoUID)
+		default:
+			log.Warnf("photo: unknown SQL dialect (stack)")
+		}
+
+		if err := photo.Updates(map[string]interface{}{"DeletedAt": Timestamp(), "PhotoQuality": -1}); err != nil {
+			return identical, err
+		}
+	}
+
+	return identical, err
 }

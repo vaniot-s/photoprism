@@ -5,6 +5,8 @@ import (
 	"path"
 	"path/filepath"
 
+	"github.com/photoprism/photoprism/internal/query"
+
 	"github.com/photoprism/photoprism/internal/entity"
 	"github.com/photoprism/photoprism/internal/event"
 	"github.com/photoprism/photoprism/pkg/fs"
@@ -111,7 +113,7 @@ func ImportWorker(jobs <-chan ImportJob) {
 				}
 			}
 
-			related, err := f.RelatedFiles(imp.conf.Settings().Index.Sequences)
+			related, err := f.RelatedFiles(imp.conf.Settings().StackSequences())
 
 			if err != nil {
 				log.Errorf("import: %s in %s (find related files)", err.Error(), txt.Quote(fs.RelName(destinationMainFilename, imp.originalsPath())))
@@ -166,6 +168,13 @@ func ImportWorker(jobs <-chan ImportJob) {
 				}
 
 				res := ind.MediaFile(f, indexOpt, "")
+
+				if res.Indexed() && f.IsJpeg() {
+					if err := f.ResampleDefault(ind.thumbPath(), false); err != nil {
+						log.Errorf("import: failed creating thumbnails for %s (%s)", txt.Quote(f.BaseName()), err.Error())
+						query.SetFileError(res.FileUID, err.Error())
+					}
+				}
 
 				log.Infof("import: %s related %s file %s", res, f.FileType(), txt.Quote(f.RelName(ind.originalsPath())))
 			}

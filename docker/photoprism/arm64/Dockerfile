@@ -43,10 +43,7 @@ RUN apt-get update && apt-get upgrade && \
     git \
     gettext \
     tzdata \
-    gconf-service \
-    seccomp \
-    libseccomp-dev \
-    libseccomp2
+    gconf-service
 
 # Install & configure TensorFlow for C
 #
@@ -73,12 +70,12 @@ RUN npm install --unsafe-perm=true --allow-root -g npm
 RUN npm config set cache ~/.cache/npm
 
 # Install Go
-ENV GOLANG_VERSION 1.15.3
+ENV GOLANG_VERSION 1.15.5
 RUN set -eux; \
 	\
 	url="https://golang.org/dl/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
 	wget -O go.tgz "$url"; \
-	echo "b8b88a87ada918ef5189fa5938ef4c46a4f61952a34317612aaac705f4275f80 *go.tgz" | sha256sum -c -; \
+	echo "a72a0b036beb4193a0214bca3fca4c5d68a38a4ccf098c909f7ce8bf08567c48 *go.tgz" | sha256sum -c -; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz; \
 	export PATH="/usr/local/go/bin:$PATH"; \
@@ -120,17 +117,14 @@ RUN echo 'APT::Get::Assume-Yes "true";' > /etc/apt/apt.conf.d/80forceyes
 RUN echo 'APT::Get::Fix-Missing "true";' > /etc/apt/apt.conf.d/80fixmissin
 
 # Install additional distribution packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade && apt-get install -y --no-install-recommends \
         ca-certificates \
         tzdata \
         libheif-examples \
-        libseccomp2 \
         darktable \
         rawtherapee \
         exiftool \
         ffmpeg && \
-    apt-get update && \
-    apt-get upgrade && \
     apt-get dist-upgrade && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -153,9 +147,10 @@ ENV TMPDIR /tmp
 
 # Storage path names
 ENV PHOTOPRISM_ASSETS_PATH /photoprism/assets
+ENV PHOTOPRISM_STORAGE_PATH /photoprism/storage
+ENV PHOTOPRISM_BACKUP_PATH /var/lib/photoprism
 ENV PHOTOPRISM_ORIGINALS_PATH /photoprism/originals
 ENV PHOTOPRISM_IMPORT_PATH /photoprism/import
-ENV PHOTOPRISM_STORAGE_PATH /photoprism/storage
 ENV PHOTOPRISM_LOG_FILENAME /photoprism/photoprism.log
 ENV PHOTOPRISM_PID_FILENAME /photoprism/photoprism.pid
 
@@ -192,14 +187,13 @@ COPY --from=build /root/.photoprism/assets /photoprism/assets
 
 # Create directories
 RUN mkdir -p \
+    /var/lib/photoprism \
     /photoprism/originals \
     /photoprism/import \
     /photoprism/storage/settings \
     /photoprism/storage/cache && \
-    chmod 777 /photoprism && \
-    chown -R photoprism:photoprism /photoprism && \
-    find /photoprism -type d -print0 | xargs -0 chmod 777 && \
-    find /photoprism -type f -print0 | xargs -0 chmod a+rw
+    chown -R photoprism:photoprism /photoprism /var/lib/photoprism && \
+    chmod -R a+rw /photoprism /var/lib/photoprism
 
 # Show photoprism version
 RUN photoprism -v
@@ -210,6 +204,7 @@ EXPOSE 2342
 # Configure entrypoint
 COPY --chown=root:root /docker/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+VOLUME /var/lib/photoprism
 
 # Run server
 CMD ["photoprism", "start"]

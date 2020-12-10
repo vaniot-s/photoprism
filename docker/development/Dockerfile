@@ -55,9 +55,6 @@ RUN apt-get update && apt-get upgrade && \
     ffmpeg \
     lsof \
     apache2-utils \
-    seccomp \
-    libseccomp-dev \
-    libseccomp2 \
     fonts-roboto \
     sudo
 
@@ -102,12 +99,12 @@ RUN npm install --unsafe-perm=true --allow-root -g npm testcafe chromedriver
 RUN npm config set cache ~/.cache/npm
 
 # Install Go
-ENV GOLANG_VERSION 1.15.3
+ENV GOLANG_VERSION 1.15.5
 RUN set -eux; \
 	\
 	url="https://golang.org/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
 	wget -O go.tgz "$url"; \
-	echo "010a88df924a81ec21b293b5da8f9b11c176d27c0ee3962dc1738d2352d3c02d *go.tgz" | sha256sum -c -; \
+	echo "9a58494e8da722c3aef248c9227b0e9c528c7318309827780f16220998180a0d *go.tgz" | sha256sum -c -; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz; \
 	export PATH="/usr/local/go/bin:$PATH"; \
@@ -137,12 +134,12 @@ RUN env GO111MODULE=off /usr/local/go/bin/go get -u github.com/psampaz/go-mod-ou
 
 # Create photoprism user and directory for deployment
 RUN useradd photoprism -m -d /photoprism && \
-    chmod 777 /photoprism && \
+    mkdir -p /var/lib/photoprism && \
     echo "alias go=richgo" > /photoprism/.bash_aliases && \
     echo "photoprism ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-    chown -R photoprism:photoprism /photoprism && \
-    find /go -type d -print0 | xargs -0 chmod 777 && \
-    find /go -type f -print0 | xargs -0 chmod a+rw
+    chown -R photoprism:photoprism /photoprism /var/lib/photoprism && \
+    chmod -R a+rw /photoprism /var/lib/photoprism /go && \
+    find /go -type d -print0 | xargs -0 chmod 777
 
 # Copy mysql client config for development
 COPY --chown=root:root /docker/development/.my.cnf /root/.my.cnf
@@ -154,6 +151,7 @@ WORKDIR "/go/src/github.com/photoprism/photoprism"
 
 # Expose HTTP port 2342, 2343 plus 9515 for chromedriver
 EXPOSE 2342 2343 9515
+VOLUME /var/lib/photoprism
 
 # Keep container running (services can be started manually using a terminal)
 CMD tail -f /dev/null

@@ -16,13 +16,15 @@ import (
 
 // Purge represents a worker that removes missing files from search results.
 type Purge struct {
-	conf *config.Config
+	conf  *config.Config
+	files *Files
 }
 
 // NewPurge returns a new purge worker.
-func NewPurge(conf *config.Config) *Purge {
+func NewPurge(conf *config.Config, files *Files) *Purge {
 	instance := &Purge{
-		conf: conf,
+		conf:  conf,
+		files: files,
 	}
 
 	return instance
@@ -96,15 +98,16 @@ func (prg *Purge) Start(opt PurgeOptions) (purgedFiles map[string]bool, purgedPh
 			} else if !fs.FileExists(fileName) {
 				if opt.Dry {
 					purgedFiles[fileName] = true
-					log.Infof("purge: file %s would be removed", txt.Quote(file.FileName))
+					log.Infof("purge: file %s would be flagged as missing", txt.Quote(file.FileName))
 					continue
 				}
 
 				if err := file.Purge(); err != nil {
 					log.Errorf("purge: %s", err)
 				} else {
+					prg.files.Remove(file.FileName, file.FileRoot)
 					purgedFiles[fileName] = true
-					log.Infof("purge: removed file %s", txt.Quote(file.FileName))
+					log.Infof("purge: flagged file %s as missing", txt.Quote(file.FileName))
 				}
 			}
 		}
@@ -155,7 +158,12 @@ func (prg *Purge) Start(opt PurgeOptions) (purgedFiles map[string]bool, purgedPh
 				if opt.Hard {
 					log.Infof("purge: permanently deleted %s", txt.Quote(photo.PhotoName))
 				} else {
-					log.Infof("purge: removed %s", txt.Quote(photo.PhotoName))
+					log.Infof("purge: flagged photo %s as deleted", txt.Quote(photo.PhotoName))
+				}
+
+				// Remove files from lookup table.
+				for _, file := range photo.AllFiles() {
+					prg.files.Remove(file.FileName, file.FileRoot)
 				}
 			}
 		}
@@ -176,7 +184,11 @@ func (prg *Purge) Start(opt PurgeOptions) (purgedFiles map[string]bool, purgedPh
 	}
 
 	if err := entity.UpdatePhotoCounts(); err != nil {
-		log.Errorf("purge: %s", err)
+		log.Errorf("purge: %s (update photo counts)", err)
+	}
+
+	if err := query.CleanDuplicates(); err != nil {
+		log.Errorf("purge: %s (clean duplicates)", err)
 	}
 
 	return purgedFiles, purgedPhotos, nil

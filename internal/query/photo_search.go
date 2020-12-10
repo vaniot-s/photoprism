@@ -231,8 +231,6 @@ func PhotoSearch(f form.PhotoSearch) (results PhotoResults, count int, err error
 
 		if strings.HasSuffix(p, "/") {
 			s = s.Where("photos.photo_path = ?", p[:len(p)-1])
-		} else if strings.Contains(p, ",") {
-			s = s.Where("photos.photo_path IN (?)", strings.Split(p, ","))
 		} else {
 			s = s.Where("photos.photo_path LIKE ?", strings.ReplaceAll(p, "*", "%"))
 		}
@@ -240,6 +238,10 @@ func PhotoSearch(f form.PhotoSearch) (results PhotoResults, count int, err error
 
 	if f.Name != "" {
 		s = s.Where("photos.photo_name LIKE ?", strings.ReplaceAll(f.Name, "*", "%"))
+	}
+
+	if f.Filename != "" {
+		s = s.Where("files.file_name LIKE ?", strings.ReplaceAll(f.Filename, "*", "%"))
 	}
 
 	if f.Original != "" {

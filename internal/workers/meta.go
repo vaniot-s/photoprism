@@ -33,7 +33,7 @@ func (worker *Meta) originalsPath() string {
 func (worker *Meta) Start() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("meta-worker: %s (panic)\nstack: %s", r, debug.Stack())
+			err = fmt.Errorf("metadata: %s (panic)\nstack: %s", r, debug.Stack())
 			log.Error(err)
 		}
 	}()
@@ -44,7 +44,7 @@ func (worker *Meta) Start() (err error) {
 
 	defer mutex.MetaWorker.Stop()
 
-	log.Debugf("meta-worker: starting routine check")
+	log.Debugf("metadata: starting routine check")
 
 	done := make(map[string]bool)
 
@@ -67,7 +67,7 @@ func (worker *Meta) Start() (err error) {
 
 		for _, photo := range photos {
 			if mutex.MetaWorker.Canceled() {
-				return errors.New("meta-worker: check canceled")
+				return errors.New("metadata: check canceled")
 			}
 
 			if done[photo.PhotoUID] {
@@ -76,16 +76,23 @@ func (worker *Meta) Start() (err error) {
 
 			done[photo.PhotoUID] = true
 
-			if updated, err := photo.Optimize(); err != nil {
-				log.Errorf("meta-worker: %s (optimize photo)", err)
+			updated, merged, err := photo.Optimize(worker.conf.Settings().StackMeta(), worker.conf.Settings().StackUUID())
+
+			if err != nil {
+				log.Errorf("metadata: %s (optimize photo)", err)
 			} else if updated {
 				optimized++
-				log.Debugf("meta-worker: optimized photo %s", photo.String())
+				log.Debugf("metadata: optimized photo %s", photo.String())
+			}
+
+			for _, m := range merged {
+				log.Infof("metadata: stacked %s", m.PhotoUID)
+				done[m.PhotoUID] = true
 			}
 		}
 
 		if mutex.MetaWorker.Canceled() {
-			return errors.New("meta-worker: check canceled")
+			return errors.New("metadata: check canceled")
 		}
 
 		offset += limit
@@ -94,15 +101,15 @@ func (worker *Meta) Start() (err error) {
 	}
 
 	if optimized > 0 {
-		log.Infof("meta-worker: optimized %d photos", optimized)
+		log.Infof("metadata: optimized %d photos", optimized)
 	}
 
 	if err := query.ResetPhotoQuality(); err != nil {
-		log.Warnf("meta-worker: %s (reset photo quality)", err.Error())
+		log.Warnf("metadata: %s (reset photo quality)", err.Error())
 	}
 
 	if err := entity.UpdatePhotoCounts(); err != nil {
-		log.Warnf("meta-worker: %s (update photo counts)", err.Error())
+		log.Warnf("metadata: %s (update photo counts)", err.Error())
 	}
 
 	moments := photoprism.NewMoments(worker.conf)
